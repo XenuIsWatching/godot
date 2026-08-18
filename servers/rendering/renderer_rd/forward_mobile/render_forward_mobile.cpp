@@ -233,6 +233,7 @@ RID RenderForwardMobile::RenderBufferDataForwardMobile::get_color_fbs(Framebuffe
 	uint32_t view_count = render_buffers->get_view_count();
 
 	RID vrs_texture;
+	bool vrs_texture_from_xr = false;
 #ifndef XR_DISABLED
 	RSE::ViewportVRSMode vrs_mode = render_buffers->get_vrs_mode();
 	if (vrs_mode == RSE::VIEWPORT_VRS_XR) {
@@ -242,12 +243,21 @@ RID RenderForwardMobile::RenderBufferDataForwardMobile::get_color_fbs(Framebuffe
 			bool use_vrs_rasterization_rate_map = RD::get_singleton()->vrs_get_method() == RD::VRS_METHOD_RASTERIZATION_RATE_MAP && xr_interface->get_vrs_texture_format() == XRInterface::XR_VRS_TEXTURE_FORMAT_RASTERIZATION_RATE_MAP;
 			if (use_vrs_fragment_density_map || use_vrs_rasterization_rate_map) {
 				vrs_texture = xr_interface->get_vrs_texture();
+				vrs_texture_from_xr = vrs_texture.is_valid();
 			}
 		}
 	}
 #endif // XR_DISABLED
 	if (vrs_texture.is_null() && render_buffers->has_texture(RB_SCOPE_VRS, RB_TEXTURE)) {
 		vrs_texture = render_buffers->get_texture(RB_SCOPE_VRS, RB_TEXTURE);
+	}
+
+	// Foveation is not supported when post effects force the separate post pass, so
+	// don't attach the runtime's density map there. A user-supplied VRS texture from
+	// RB_SCOPE_VRS is unaffected.
+	if (vrs_texture_from_xr && p_config_type != FB_CONFIG_RENDER_AND_POST_PASS) {
+		vrs_texture = RID();
+		WARN_PRINT_ONCE("XR foveation is unavailable because rendering features that require a separate post pass are in use (for example glow, DOF, screen-space AA, 3D scaling or stencil).");
 	}
 
 	Vector<RID> textures;

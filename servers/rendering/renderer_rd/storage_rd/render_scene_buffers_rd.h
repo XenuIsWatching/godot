@@ -68,6 +68,7 @@ class RenderSceneBuffersRD : public RenderSceneBuffers {
 
 private:
 	bool can_be_storage = true;
+	bool direct_output = false; // Scene drawn straight into an LDR target: no luminance scaling.
 	bool force_hdr = false;
 	uint32_t max_cluster_elements = 512;
 	RD::DataFormat preferred_data_format = RD::DATA_FORMAT_MAX;
@@ -194,6 +195,8 @@ public:
 	RD::DataFormat get_preferred_data_format() const { return preferred_data_format; }
 	RD::DataFormat get_base_data_format() const { return force_hdr ? RD::DATA_FORMAT_R16G16B16A16_SFLOAT : preferred_data_format; }
 	float get_luminance_multiplier() const;
+	void set_direct_output(bool p_direct) { direct_output = p_direct; }
+	bool get_direct_output() const { return direct_output; }
 	void set_vrs(RendererRD::VRS *p_vrs) { vrs = p_vrs; }
 	RSE::ViewportVRSMode get_vrs_mode() { return vrs_mode; }
 

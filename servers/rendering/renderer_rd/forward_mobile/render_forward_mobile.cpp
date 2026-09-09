@@ -176,6 +176,55 @@ void RenderForwardMobile::RenderBufferDataForwardMobile::free_data() {
 	if (render_buffers) {
 		render_buffers->clear_context(RB_SCOPE_MOBILE);
 	}
+	for (const KeyValue<RID, RID> &E : direct_target_views) {
+		if (RD::get_singleton()->texture_is_valid(E.value)) {
+			RD::get_singleton()->free_rid(E.value);
+		}
+	}
+	direct_target_views.clear();
+}
+
+RID RenderForwardMobile::RenderBufferDataForwardMobile::get_direct_target(RID p_render_target, bool p_srgb_view) {
+	// The render target's colour texture is a UNORM view of an sRGB image (the OpenXR
+	// swapchain, see OpenXRVulkanExtension::get_swapchain_image_data) because the
+	// tonemap shader encodes to sRGB itself. Scene shaders write linear light, so the
+	// direct pass prefers an sRGB view of the same image: the hardware encodes on
+	// store and blending stays linear. Without one the scene shader encodes.
+	RendererRD::TextureStorage *texture_storage = RendererRD::TextureStorage::get_singleton();
+	RID target = texture_storage->render_target_get_rd_texture(p_render_target);
+	direct_target_is_srgb = false;
+	if (!p_srgb_view || target.is_null()) {
+		return target;
+	}
+	RID *cached = direct_target_views.getptr(target);
+	if (cached && RD::get_singleton()->texture_is_valid(*cached)) {
+		direct_target_is_srgb = true;
+		return *cached;
+	}
+	RD::TextureFormat tf = RD::get_singleton()->texture_get_format(target);
+	RD::DataFormat srgb_format;
+	switch (tf.format) {
+		case RD::DATA_FORMAT_R8G8B8A8_UNORM:
+			srgb_format = RD::DATA_FORMAT_R8G8B8A8_SRGB;
+			break;
+		case RD::DATA_FORMAT_B8G8R8A8_UNORM:
+			srgb_format = RD::DATA_FORMAT_B8G8R8A8_SRGB;
+			break;
+		default:
+			return target;
+	}
+	if (!tf.shareable_formats.has(srgb_format)) {
+		return target;
+	}
+	RD::TextureView view;
+	view.format_override = srgb_format;
+	RID rid = RD::get_singleton()->texture_create_shared(view, target);
+	if (rid.is_null()) {
+		return target;
+	}
+	direct_target_views[target] = rid;
+	direct_target_is_srgb = true;
+	return rid;
 }
 
 void RenderForwardMobile::RenderBufferDataForwardMobile::configure(RenderSceneBuffersRD *p_render_buffers) {
@@ -248,19 +297,29 @@ RID RenderForwardMobile::RenderBufferDataForwardMobile::get_color_fbs(Framebuffe
 	Vector<RID> textures;
 	int color_buffer_id = 0;
 	int depth_buffer_id = 1;
-	if (p_config_type == FB_CONFIG_RENDER_AND_POST_PASS && vrs_texture.is_valid() && texture_storage->render_target_is_subsampled_enabled(render_buffers->get_render_target())) {
+	if ((p_config_type == FB_CONFIG_RENDER_AND_POST_PASS || p_config_type == FB_CONFIG_DIRECT_PASS) && vrs_texture.is_valid() && texture_storage->render_target_is_subsampled_enabled(render_buffers->get_render_target())) {
 		textures.push_back(use_msaa ? render_buffers->get_color_msaa_subsampled() : render_buffers->get_color_subsampled()); // 0 - color buffer.
 		textures.push_back(use_msaa ? render_buffers->get_depth_msaa_subsampled() : render_buffers->get_depth_subsampled()); // 1 - depth buffer.
 	} else {
 		textures.push_back(use_msaa ? render_buffers->get_color_msaa() : render_buffers->get_internal_texture()); // 0 - color buffer.
 		textures.push_back(use_msaa ? render_buffers->get_depth_msaa() : render_buffers->get_depth_texture()); // 1 - depth buffer.
 	}
+	RID direct_view;
+	if (p_config_type == FB_CONFIG_DIRECT_PASS) {
+		RID render_target = render_buffers->get_render_target();
+		ERR_FAIL_COND_V(render_target.is_null(), RID());
+		direct_view = get_direct_target(render_target, RenderForwardMobile::get_singleton()->direct_target_srgb_view);
+		ERR_FAIL_COND_V(direct_view.is_null(), RID());
+		if (!use_msaa) {
+			textures.write[0] = direct_view; // Draw straight into the target.
+		}
+	}
 	if (vrs_texture.is_valid()) {
 		textures.push_back(vrs_texture); // 2 - vrs texture.
 	}
 	if (use_msaa) {
 		color_buffer_id = textures.size();
-		textures.push_back(render_buffers->get_internal_texture()); // Color buffer for resolve.
+		textures.push_back(direct_view.is_valid() ? direct_view : render_buffers->get_internal_texture()); // Color buffer for resolve.
 	}
 	if (use_msaa && p_resolve_depth) {
 		depth_buffer_id = textures.size();
@@ -271,6 +330,7 @@ RID RenderForwardMobile::RenderBufferDataForwardMobile::get_color_fbs(Framebuffe
 	Vector<RD::FramebufferPass> passes;
 
 	switch (p_config_type) {
+		case FB_CONFIG_DIRECT_PASS:
 		case FB_CONFIG_RENDER_PASS: {
 			RD::FramebufferPass pass;
 			pass.color_attachments.push_back(0);
@@ -877,6 +937,7 @@ void RenderForwardMobile::_render_scene(RenderDataRD *p_render_data, const Color
 	bool reverse_cull = p_render_data->scene_data->cam_transform.basis.determinant() < 0;
 	bool merge_transparent_pass = true; // If true: we can do our transparent pass in the same pass as our opaque pass.
 	bool using_subpass_post_process = true; // If true: we can do our post processing in a subpass
+	bool using_direct_pass = false; // If true: the scene is drawn straight into the render target, no post processing at all.
 	RendererRD::MaterialStorage::Samplers samplers;
 	bool hdr_render_target = false;
 
@@ -999,7 +1060,28 @@ void RenderForwardMobile::_render_scene(RenderDataRD *p_render_data, const Color
 			resolve_depth_buffer = true;
 		}
 
-		if (using_subpass_post_process) {
+		// Draw straight into the render target when the tonemap subpass would only be
+		// a copy: an LDR target this pass can resolve into, no colour adjustments, and
+		// no sky pass (its shader does not carry the tonemap epilogue yet). Debanding
+		// is kept by dithering in the scene shader instead. Saves a GMEM attachment
+		// and a subpass per bin on a tiler.
+		if (using_subpass_post_process && render_directly_to_target && render_target.is_valid() && !texture_storage->render_target_is_using_hdr(render_target) && (p_render_data->scene_data->view_count > 1 || texture_storage->render_target_get_msaa(render_target) == RSE::VIEWPORT_MSAA_DISABLED)) {
+			bool env_draws_sky = false;
+			bool env_adjusts = false;
+			if (is_environment(p_render_data->environment)) {
+				RSE::EnvironmentBG env_bg = environment_get_background(p_render_data->environment);
+				env_draws_sky = !p_render_data->transparent_bg && (env_bg == RSE::ENV_BG_SKY || ((env_bg == RSE::ENV_BG_CLEAR_COLOR || env_bg == RSE::ENV_BG_COLOR) && environment_get_fog_enabled(p_render_data->environment)));
+				env_adjusts = environment_get_adjustments_enabled(p_render_data->environment);
+			}
+			using_direct_pass = !env_draws_sky && !env_adjusts && texture_storage->render_target_get_rd_texture(render_target).is_valid();
+		}
+		rb->set_direct_output(using_direct_pass);
+
+		if (using_direct_pass) {
+			framebuffer = rb_data->get_color_fbs(RenderBufferDataForwardMobile::FB_CONFIG_DIRECT_PASS, resolve_depth_buffer && supports_depth_resolve);
+			global_pipeline_data_required.use_direct_pass = true;
+			p_render_data->scene_data->direct_encode_srgb = !rb_data->direct_target_is_srgb;
+		} else if (using_subpass_post_process) {
 			// We can do all in one go.
 			framebuffer = rb_data->get_color_fbs(RenderBufferDataForwardMobile::FB_CONFIG_RENDER_AND_POST_PASS, resolve_depth_buffer && supports_depth_resolve);
 			global_pipeline_data_required.use_subpass_post_pass = true;
@@ -1180,6 +1262,11 @@ void RenderForwardMobile::_render_scene(RenderDataRD *p_render_data, const Color
 		base_specialization.scene_use_reflection_cubemap = use_reflection_cubemap;
 		base_specialization.scene_roughness_limiter_enabled = p_render_data->render_buffers.is_valid() && screen_space_roughness_limiter_is_active();
 		base_specialization.luminance_multiplier = p_render_data->render_buffers.is_valid() ? p_render_data->render_buffers->get_luminance_multiplier() : 1.0;
+		base_specialization.direct_output = using_direct_pass;
+		if (using_direct_pass && rb->get_use_debanding()) {
+			// The viewport's debanding lived in the tonemap subpass; dither in the scene shader instead.
+			base_specialization.use_material_debanding = true;
+		}
 	}
 
 	{
@@ -1221,7 +1308,9 @@ void RenderForwardMobile::_render_scene(RenderDataRD *p_render_data, const Color
 
 		_setup_environment(p_render_data, is_reflection_probe, screen_size, screen_size, p_default_bg_color, p_render_data->render_buffers.is_valid());
 
-		if (merge_transparent_pass && using_subpass_post_process) {
+		if (merge_transparent_pass && using_direct_pass) {
+			RENDER_TIMESTAMP("Render Opaque + Transparent (direct)");
+		} else if (merge_transparent_pass && using_subpass_post_process) {
 			RENDER_TIMESTAMP("Render Opaque + Transparent + Tonemap");
 		} else if (merge_transparent_pass) {
 			RENDER_TIMESTAMP("Render Opaque + Transparent");
@@ -1234,7 +1323,11 @@ void RenderForwardMobile::_render_scene(RenderDataRD *p_render_data, const Color
 		// Set clear colors.
 		Vector<Color> c;
 		if (!load_color) {
-			Color cc = clear_color.srgb_to_linear() * inverse_luminance_multiplier;
+			// The direct pass writes encoded values, so its clear is the sRGB colour itself.
+			// On the direct pass the clear must match what the shader writes: encoded values
+			// into a UNORM view, linear into an sRGB view.
+			const bool clear_encoded = using_direct_pass && !rb_data->direct_target_is_srgb;
+			Color cc = clear_encoded ? clear_color : clear_color.srgb_to_linear() * inverse_luminance_multiplier;
 			if (rb_data.is_valid()) {
 				cc.a = 0; // For transparent viewport backgrounds.
 			}
@@ -1242,9 +1335,9 @@ void RenderForwardMobile::_render_scene(RenderDataRD *p_render_data, const Color
 			c.push_back(cc); // Our render buffer.
 			if (rb_data.is_valid()) {
 				if (use_msaa) {
-					c.push_back(clear_color.srgb_to_linear() * inverse_luminance_multiplier); // Our resolve buffer.
+					c.push_back(clear_encoded ? clear_color : clear_color.srgb_to_linear() * inverse_luminance_multiplier); // Our resolve buffer.
 				}
-				if (using_subpass_post_process) {
+				if (using_subpass_post_process && !using_direct_pass) {
 					c.push_back(Color()); // Our 2D buffer we're copying into.
 				}
 			}
@@ -1314,7 +1407,7 @@ void RenderForwardMobile::_render_scene(RenderDataRD *p_render_data, const Color
 			}
 
 			// blit to tonemap
-			if (rb_data.is_valid() && using_subpass_post_process) {
+			if (rb_data.is_valid() && using_subpass_post_process && !using_direct_pass) {
 				_post_process_subpass(p_render_data->render_buffers->get_internal_texture(), framebuffer, p_render_data);
 			}
 
@@ -3228,8 +3321,11 @@ void RenderForwardMobile::_geometry_instance_update(RenderGeometryInstance *p_ge
 	ginstance->dirty_list_element.remove_from_list();
 }
 
-static RD::FramebufferFormatID _get_color_framebuffer_format_for_pipeline(RD::DataFormat p_color_format, bool p_can_be_storage, RD::TextureSamples p_samples, RD::TextureSamples p_target_samples, bool p_vrs, bool p_post_pass, bool p_hdr, uint32_t p_view_count) {
+static RD::FramebufferFormatID _get_color_framebuffer_format_for_pipeline(RD::DataFormat p_color_format, bool p_can_be_storage, RD::TextureSamples p_samples, RD::TextureSamples p_target_samples, bool p_vrs, bool p_post_pass, bool p_hdr, uint32_t p_view_count, bool p_direct = false, bool p_direct_srgb = false) {
 	const bool multisampling = p_samples > RD::TEXTURE_SAMPLES_1;
+	// The direct pass draws (or resolves) into the render target's own texture.
+	const RD::DataFormat target_format = RendererRD::TextureStorage::render_target_get_color_format(false, p_direct_srgb);
+	const uint32_t target_usage = RendererRD::TextureStorage::render_target_get_color_usage_bits(false);
 	RD::AttachmentFormat attachment;
 
 	RD::AttachmentFormat unused_attachment;
@@ -3240,8 +3336,13 @@ static RD::FramebufferFormatID _get_color_framebuffer_format_for_pipeline(RD::Da
 
 	// Color attachment.
 	attachment.samples = p_samples;
-	attachment.format = p_color_format;
-	attachment.usage_flags = RenderSceneBuffersRD::get_color_usage_bits(false, multisampling, p_can_be_storage);
+	if (p_direct && !multisampling) {
+		attachment.format = target_format;
+		attachment.usage_flags = target_usage;
+	} else {
+		attachment.format = p_color_format;
+		attachment.usage_flags = RenderSceneBuffersRD::get_color_usage_bits(false, multisampling, p_can_be_storage);
+	}
 	attachments.push_back(attachment);
 
 	// Depth attachment.
@@ -3261,8 +3362,13 @@ static RD::FramebufferFormatID _get_color_framebuffer_format_for_pipeline(RD::Da
 	if (multisampling) {
 		// Resolve attachment.
 		attachment.samples = RD::TEXTURE_SAMPLES_1;
-		attachment.format = p_color_format;
-		attachment.usage_flags = RenderSceneBuffersRD::get_color_usage_bits(true, false, p_can_be_storage);
+		if (p_direct) {
+			attachment.format = target_format;
+			attachment.usage_flags = target_usage;
+		} else {
+			attachment.format = p_color_format;
+			attachment.usage_flags = RenderSceneBuffersRD::get_color_usage_bits(true, false, p_can_be_storage);
+		}
 		attachments.push_back(attachment);
 	}
 
@@ -3378,6 +3484,28 @@ void RenderForwardMobile::_mesh_compile_pipelines_for_surface(const SurfacePipel
 
 	const uint32_t hdr_start = p_global.use_ldr_render_target ? 0 : 1;
 	const uint32_t hdr_target_iterations = p_global.use_hdr_render_target ? 2 : 1;
+
+	if (p_global.use_direct_pass) {
+		for (uint32_t use_vrs = 0; use_vrs < vrs_iterations; use_vrs++) {
+			const RD::DataFormat buffers_color_format = _render_buffers_get_preferred_color_format();
+			pipeline_key.version = SceneShaderForwardMobile::SHADER_VERSION_COLOR_PASS;
+			pipeline_key.framebuffer_format_id = _get_color_framebuffer_format_for_pipeline(buffers_color_format, buffers_can_be_storage, RD::TextureSamples(p_global.texture_samples), RD::TextureSamples(p_global.target_samples), use_vrs, false, false, 1, true, direct_target_srgb_view);
+			_mesh_compile_pipeline_for_surface(p_surface.shader, p_surface.mesh_surface, p_surface.instanced, p_source, pipeline_key, r_pipeline_pairs);
+			if (p_global.use_lightmaps && p_surface.can_use_lightmap) {
+				pipeline_key.version = SceneShaderForwardMobile::SHADER_VERSION_LIGHTMAP_COLOR_PASS;
+				_mesh_compile_pipeline_for_surface(p_surface.shader, p_surface.mesh_surface, p_surface.instanced, p_source, pipeline_key, r_pipeline_pairs);
+			}
+			if (multiview_enabled) {
+				pipeline_key.version = SceneShaderForwardMobile::SHADER_VERSION_COLOR_PASS_MULTIVIEW;
+				pipeline_key.framebuffer_format_id = _get_color_framebuffer_format_for_pipeline(buffers_color_format, buffers_can_be_storage, RD::TextureSamples(p_global.texture_samples), RD::TextureSamples(p_global.target_samples), use_vrs, false, false, 2, true, direct_target_srgb_view);
+				_mesh_compile_pipeline_for_surface(p_surface.shader, p_surface.mesh_surface, p_surface.instanced, p_source, pipeline_key, r_pipeline_pairs);
+				if (p_global.use_lightmaps && p_surface.can_use_lightmap) {
+					pipeline_key.version = SceneShaderForwardMobile::SHADER_VERSION_LIGHTMAP_COLOR_PASS_MULTIVIEW;
+					_mesh_compile_pipeline_for_surface(p_surface.shader, p_surface.mesh_surface, p_surface.instanced, p_source, pipeline_key, r_pipeline_pairs);
+				}
+			}
+		}
+	}
 
 	for (uint32_t use_vrs = 0; use_vrs < vrs_iterations; use_vrs++) {
 		for (uint32_t use_post_pass = post_pass_start; use_post_pass < post_pass_iterations; use_post_pass++) {
@@ -3570,6 +3698,8 @@ RenderForwardMobile::RenderForwardMobile() {
 	singleton = this;
 
 	disable_ubershaders = RD::get_singleton()->get_driver_workarounds().disable_ubershaders;
+	render_directly_to_target = GLOBAL_DEF_RST("rendering/renderer/mobile/render_directly_to_target", false);
+	direct_target_srgb_view = GLOBAL_DEF_RST("rendering/renderer/mobile/direct_target_srgb_view", true);
 	if (disable_ubershaders) {
 		print_verbose("Ubershaders: Disabled");
 	} else {

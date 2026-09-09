@@ -129,6 +129,23 @@ void RenderSceneDataRD::update_ubo(RID p_uniform_buffer, RSE::ViewportDebugDraw 
 	ubo.camera_visible_layers = camera_visible_layers;
 	ubo.pass_alpha_multiplier = p_opaque_render_buffers && p_apply_alpha_multiplier ? 0.0f : 1.0f;
 
+	// Same parameters the mobile tonemap subpass uses for an SDR target (AgX white limited, max 1.0).
+	ubo.tonemap_mode = RSE::ENV_TONE_MAPPER_LINEAR;
+	ubo.tonemap_exposure = 1.0f;
+	ubo.tonemap_output_max = 1.0f;
+	ubo.tonemap_encode_srgb = direct_encode_srgb ? 1 : 0;
+	for (int i = 0; i < 4; i++) {
+		ubo.tonemapper_params[i] = 0.0f;
+	}
+	if (p_env.is_valid()) {
+		ubo.tonemap_mode = render_scene_render->environment_get_tone_mapper(p_env);
+		ubo.tonemap_exposure = render_scene_render->environment_get_exposure(p_env);
+		RendererEnvironmentStorage::TonemapParameters tp = render_scene_render->environment_get_tonemap_parameters(p_env, true, 1.0f);
+		for (int i = 0; i < 4; i++) {
+			ubo.tonemapper_params[i] = tp.tonemapper_params[i];
+		}
+	}
+
 	ubo.viewport_size[0] = p_viewport_size.x;
 	ubo.viewport_size[1] = p_viewport_size.y;
 

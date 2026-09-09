@@ -1027,6 +1027,7 @@ layout(location = 0) out vec4 frag_color;
 #endif // RENDER DEPTH
 
 #include "../scene_forward_aa_inc.glsl"
+#include "../tonemap_curves_inc.glsl"
 
 #if !defined(MODE_RENDER_DEPTH) && !defined(MODE_UNSHADED) // && !defined(USE_VERTEX_LIGHTING)
 
@@ -2351,9 +2352,21 @@ void main() {
 	out_color.rgb = mix(out_color.rgb, fog.rgb, fog.a);
 #endif // !FOG_DISABLED
 
-	// On mobile we use a UNORM buffer with 10bpp which results in a range from 0.0 - 1.0 resulting in HDR breaking
-	// We divide by sc_luminance_multiplier to support a range from 0.0 - 2.0 both increasing precision on bright and darker images
-	out_color.rgb = out_color.rgb / sc_luminance_multiplier();
+	if (sc_direct_output()) {
+		// Drawing straight into the 8-bit render target: no tonemap pass follows, so
+		// tonemap here, and encode too when the target is a UNORM view (blending then
+		// happens on encoded values, as it did on the GLES renderers).
+		vec3 mapped = tmc_apply(vec3(out_color.rgb) * scene_data.tonemap_exposure, scene_data.tonemap_mode, scene_data.tonemapper_params, scene_data.tonemap_output_max);
+		mapped = clamp(mapped, vec3(0.0), vec3(1.0));
+		if (scene_data.tonemap_encode_srgb != 0u) {
+			mapped = tmc_linear_to_srgb(mapped);
+		}
+		out_color.rgb = hvec3(mapped);
+	} else {
+		// On mobile we use a UNORM buffer with 10bpp which results in a range from 0.0 - 1.0 resulting in HDR breaking
+		// We divide by sc_luminance_multiplier to support a range from 0.0 - 2.0 both increasing precision on bright and darker images
+		out_color.rgb = out_color.rgb / sc_luminance_multiplier();
+	}
 #ifdef PREMUL_ALPHA_USED
 	out_color.rgb *= premul_alpha;
 #endif
@@ -2379,7 +2392,7 @@ void main() {
 		// Use a dither strength of 100% rather than the 37.5% suggested by the original source.
 		// Assume that this shader always writes to a 10-bit buffer, so divide by 1023 to align
 		// to 10-bit quantization.
-		frag_color.rgb += (dither.rgb - 0.5) / 1023.0;
+		frag_color.rgb += (dither.rgb - 0.5) / (sc_direct_output() ? 255.0 : 1023.0);
 	}
 
 #endif //MODE_MULTIPLE_RENDER_TARGETS

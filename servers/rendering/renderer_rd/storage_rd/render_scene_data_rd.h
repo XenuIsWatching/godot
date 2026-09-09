@@ -74,6 +74,7 @@ public:
 	float opaque_prepass_threshold = 0.0;
 	bool material_uv2_mode = false;
 	float emissive_exposure_normalization = 0.0;
+	bool direct_encode_srgb = true; // When drawing straight into the render target: the target view is UNORM, encode in the shader.
 	bool shadow_pass = false;
 
 	Size2 shadow_atlas_pixel_size;
@@ -181,6 +182,13 @@ private:
 		float IBL_exposure_normalization; // Adjusts for baked exposure.
 		uint32_t camera_visible_layers;
 		float pass_alpha_multiplier;
+
+		// Tonemapping applied in the scene shader when it draws straight into the render target.
+		float tonemapper_params[4];
+		float tonemap_exposure;
+		float tonemap_output_max;
+		uint32_t tonemap_mode;
+		uint32_t tonemap_encode_srgb;
 	};
 
 	struct UBODATA {

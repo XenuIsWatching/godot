@@ -1793,6 +1793,11 @@ RID RenderingDevice::texture_create_shared(const TextureView &p_view, RID p_with
 				"Format override is not in the list of allowed shareable formats for original texture.");
 		tv.format = p_view.format_override;
 		create_shared = driver->texture_can_make_shared_with_format(texture.driver_id, p_view.format_override, raw_reintepretation);
+		if (create_shared) {
+			// The view IS this format: a framebuffer built on it must declare it, or an sRGB
+			// view of a UNORM image is rendered through a UNORM render pass and stores raw.
+			texture.format = tv.format;
+		}
 	}
 	tv.swizzle_r = p_view.swizzle_r;
 	tv.swizzle_g = p_view.swizzle_g;
@@ -1958,6 +1963,11 @@ RID RenderingDevice::texture_create_shared_from_slice(const TextureView &p_view,
 				"Format override is not in the list of allowed shareable formats for original texture.");
 		tv.format = p_view.format_override;
 		create_shared = driver->texture_can_make_shared_with_format(texture.driver_id, p_view.format_override, raw_reintepretation);
+		if (create_shared) {
+			// The view IS this format: a framebuffer built on it must declare it, or an sRGB
+			// view of a UNORM image is rendered through a UNORM render pass and stores raw.
+			texture.format = tv.format;
+		}
 	}
 
 	tv.swizzle_r = p_view.swizzle_r;

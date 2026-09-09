@@ -81,4 +81,11 @@ struct SceneData {
 	float IBL_exposure_normalization;
 	uint camera_visible_layers;
 	float pass_alpha_multiplier;
+
+	// Tonemapping applied in the scene shader when it draws straight into the render target.
+	vec4 tonemapper_params;
+	float tonemap_exposure;
+	float tonemap_output_max;
+	uint tonemap_mode;
+	uint tonemap_encode_srgb;
 };

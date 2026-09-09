@@ -121,6 +121,10 @@ bool sc_use_material_debanding() {
 	return ((sc_packed_0() >> 11) & 1U) != 0;
 }
 
+bool sc_direct_output() {
+	return ((sc_packed_0() >> 19) & 1U) != 0;
+}
+
 bool sc_multimesh() {
 	return ((sc_packed_0() >> 12) & 1U) != 0;
 }

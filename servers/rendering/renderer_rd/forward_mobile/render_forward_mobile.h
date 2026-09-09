@@ -74,6 +74,8 @@ private:
 
 	SceneShaderForwardMobile scene_shader;
 	bool disable_ubershaders = false;
+	bool render_directly_to_target = false;
+	bool direct_target_srgb_view = true;
 
 	/* Render Buffer */
 
@@ -84,10 +86,13 @@ private:
 		enum FramebufferConfigType {
 			FB_CONFIG_RENDER_PASS, // Single pass framebuffer for normal rendering.
 			FB_CONFIG_RENDER_AND_POST_PASS, // Two subpasses, one for normal rendering, one for post processing.
+			FB_CONFIG_DIRECT_PASS, // One subpass straight into the render target: no scene colour buffer, no tonemap subpass.
 			FB_CONFIG_MAX
 		};
 
 		RID get_color_fbs(FramebufferConfigType p_config_type, bool p_resolve_depth = false);
+		RID get_direct_target(RID p_render_target, bool p_srgb_view);
+		bool direct_target_is_srgb = false;
 		virtual void free_data() override;
 		virtual void configure(RenderSceneBuffersRD *p_render_buffers) override;
 
@@ -95,6 +100,7 @@ private:
 
 	private:
 		RenderSceneBuffersRD *render_buffers = nullptr;
+		HashMap<RID, RID> direct_target_views; // sRGB views of render target textures, keyed by the UNORM texture.
 	};
 
 	virtual void setup_render_buffer_data(Ref<RenderSceneBuffersRD> p_render_buffers) override;
@@ -689,6 +695,7 @@ public:
 				uint32_t use_separate_post_pass : 1;
 				uint32_t use_hdr_render_target : 1;
 				uint32_t use_ldr_render_target : 1;
+				uint32_t use_direct_pass : 1;
 			};
 		};
 	};

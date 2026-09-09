@@ -665,6 +665,7 @@ RID RenderSceneBuffersRD::get_color_subsampled() {
 	tf.array_layers = view_count;
 	tf.usage_bits = get_color_usage_bits(use_msaa, false, can_be_storage);
 	tf.is_subsampled = true;
+	tf.is_discardable = !can_be_storage;
 
 	return create_texture_from_format(RB_SCOPE_BUFFERS, RB_TEX_COLOR_SUBSAMPLED, tf);
 }
@@ -701,6 +702,7 @@ RID RenderSceneBuffersRD::get_depth_subsampled() {
 	tf.array_layers = view_count;
 	tf.usage_bits = get_depth_usage_bits(use_msaa, false, can_be_storage);
 	tf.is_subsampled = true;
+	tf.is_discardable = !can_be_storage;
 
 	return create_texture_from_format(RB_SCOPE_BUFFERS, RB_TEX_DEPTH_SUBSAMPLED, tf);
 }

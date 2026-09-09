@@ -211,6 +211,8 @@ void RenderSceneBuffersRD::configure(const RenderSceneBuffersConfiguration *p_co
 	RID vrs_texture;
 	if (vrs && vrs_mode != RSE::VIEWPORT_VRS_DISABLED) {
 		vrs_texture = create_texture(RB_SCOPE_VRS, RB_TEXTURE, get_vrs_format(), get_vrs_usage_bits(), RD::TEXTURE_SAMPLES_1, vrs->get_vrs_texture_size(internal_size));
+		// A fresh density texture is full rate everywhere until copied into.
+		texture_storage->render_target_set_vrs_needs_update(render_target, true);
 	}
 
 	// (re-)configure any named buffers

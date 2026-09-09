@@ -118,7 +118,13 @@ void VRS::update_vrs_texture(RID p_vrs_fb, RID p_render_target) {
 	RSE::ViewportVRSMode vrs_mode = texture_storage->render_target_get_vrs_mode(p_render_target);
 	RSE::ViewportVRSUpdateMode vrs_update_mode = texture_storage->render_target_get_vrs_update_mode(p_render_target);
 
-	if (vrs_mode != RSE::VIEWPORT_VRS_DISABLED && vrs_update_mode != RSE::VIEWPORT_VRS_UPDATE_DISABLED) {
+	// ONCE copies the map whenever it has to be refilled - when the texture, mode or
+	// update mode was set, and when the render buffers were rebuilt (MSAA or size
+	// change), which recreates the density texture with a full-rate initial fill.
+	// Demoting the mode to DISABLED after the first copy left that blank map in
+	// place, silently, with the density-map machinery still running at full cost.
+	bool update_now = vrs_update_mode == RSE::VIEWPORT_VRS_UPDATE_ALWAYS || (vrs_update_mode == RSE::VIEWPORT_VRS_UPDATE_ONCE && texture_storage->render_target_get_vrs_needs_update(p_render_target));
+	if (vrs_mode != RSE::VIEWPORT_VRS_DISABLED && update_now) {
 		RD::get_singleton()->draw_command_begin_label("VRS Setup");
 
 		if (vrs_mode == RSE::VIEWPORT_VRS_TEXTURE) {
@@ -149,9 +155,7 @@ void VRS::update_vrs_texture(RID p_vrs_fb, RID p_render_target) {
 #endif // XR_DISABLED
 		}
 
-		if (vrs_update_mode == RSE::VIEWPORT_VRS_UPDATE_ONCE) {
-			texture_storage->render_target_set_vrs_update_mode(p_render_target, RSE::VIEWPORT_VRS_UPDATE_DISABLED);
-		}
+		texture_storage->render_target_set_vrs_needs_update(p_render_target, false);
 
 		RD::get_singleton()->draw_command_end_label();
 	}

@@ -441,6 +441,7 @@ private:
 		RSE::ViewportVRSMode vrs_mode = RSE::VIEWPORT_VRS_DISABLED;
 		RSE::ViewportVRSUpdateMode vrs_update_mode = RSE::VIEWPORT_VRS_UPDATE_ONCE;
 		RID vrs_texture;
+		bool vrs_needs_update = true; // The density texture must be (re)filled before the next render.
 
 		Rect2i render_region;
 		bool subsampled_enabled = false;
@@ -894,6 +895,8 @@ public:
 	virtual void render_target_set_vrs_update_mode(RID p_render_target, RSE::ViewportVRSUpdateMode p_mode) override;
 	virtual RSE::ViewportVRSUpdateMode render_target_get_vrs_update_mode(RID p_render_target) const override;
 	virtual void render_target_set_vrs_texture(RID p_render_target, RID p_texture) override;
+	void render_target_set_vrs_needs_update(RID p_render_target, bool p_needs_update);
+	bool render_target_get_vrs_needs_update(RID p_render_target) const;
 	virtual RID render_target_get_vrs_texture(RID p_render_target) const override;
 
 	virtual void render_target_set_override(RID p_render_target, RID p_color_texture, RID p_depth_texture, RID p_velocity_texture, RID p_velocity_depth_texture) override;

@@ -5245,6 +5245,7 @@ void TextureStorage::render_target_set_vrs_mode(RID p_render_target, RSE::Viewpo
 	ERR_FAIL_NULL(rt);
 
 	rt->vrs_mode = p_mode;
+	rt->vrs_needs_update = true;
 }
 
 RSE::ViewportVRSMode TextureStorage::render_target_get_vrs_mode(RID p_render_target) const {
@@ -5259,6 +5260,7 @@ void TextureStorage::render_target_set_vrs_update_mode(RID p_render_target, RSE:
 	ERR_FAIL_NULL(rt);
 
 	rt->vrs_update_mode = p_mode;
+	rt->vrs_needs_update = true;
 }
 
 RSE::ViewportVRSUpdateMode TextureStorage::render_target_get_vrs_update_mode(RID p_render_target) const {
@@ -5273,6 +5275,21 @@ void TextureStorage::render_target_set_vrs_texture(RID p_render_target, RID p_te
 	ERR_FAIL_NULL(rt);
 
 	rt->vrs_texture = p_texture;
+	rt->vrs_needs_update = true;
+}
+
+void TextureStorage::render_target_set_vrs_needs_update(RID p_render_target, bool p_needs_update) {
+	RenderTarget *rt = render_target_owner.get_or_null(p_render_target);
+	ERR_FAIL_NULL(rt);
+
+	rt->vrs_needs_update = p_needs_update;
+}
+
+bool TextureStorage::render_target_get_vrs_needs_update(RID p_render_target) const {
+	RenderTarget *rt = render_target_owner.get_or_null(p_render_target);
+	ERR_FAIL_NULL_V(rt, false);
+
+	return rt->vrs_needs_update;
 }
 
 RID TextureStorage::render_target_get_vrs_texture(RID p_render_target) const {

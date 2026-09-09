@@ -1250,7 +1250,19 @@ void RenderForwardMobile::_render_scene(RenderDataRD *p_render_data, const Color
 			}
 		}
 
-		RD::DrawListID draw_list = RD::get_singleton()->draw_list_begin(framebuffer, load_color ? RD::DRAW_CLEAR_DEPTH : (RD::DRAW_CLEAR_COLOR_0 | RD::DRAW_CLEAR_DEPTH), c, 0.0f, 0, p_render_data->render_region, breadcrumb);
+		// Every colour attachment a clear value was pushed for is flagged CLEAR,
+		// not only colour 0. The resolve target and the 2D target the tonemap
+		// subpass writes into were left on the default LOAD, which on a tiler
+		// reads the previous frame of the swapchain into tile memory for every
+		// bin (two LoadColor stages per bin in a Quest 3 render-stage trace,
+		// ~0.9 ms at 2520x2640) only for the pass to overwrite all of it.
+		BitField<RD::DrawFlags> draw_flags = RD::DRAW_CLEAR_DEPTH;
+		if (!load_color) {
+			for (int ci = 0; ci < c.size(); ci++) {
+				draw_flags.set_flag(RD::DrawFlags(RD::DRAW_CLEAR_COLOR_0 << ci));
+			}
+		}
+		RD::DrawListID draw_list = RD::get_singleton()->draw_list_begin(framebuffer, draw_flags, c, 0.0f, 0, p_render_data->render_region, breadcrumb);
 		RD::FramebufferFormatID fb_format = RD::get_singleton()->framebuffer_get_format(framebuffer);
 
 		if (copy_canvas) {

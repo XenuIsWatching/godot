@@ -183,13 +183,20 @@ void RenderSceneBuffersRD::configure(const RenderSceneBuffersConfiguration *p_co
 
 	// Create our color buffer.
 	const bool resolve_target = msaa_3d != RSE::VIEWPORT_MSAA_DISABLED;
-	create_texture(RB_SCOPE_BUFFERS, RB_TEX_COLOR, get_base_data_format(), get_color_usage_bits(resolve_target, false, can_be_storage));
+	// On the mobile renderer (the one that cannot use storage) the colour and
+	// depth buffers are marked discardable: the render graph then stores an
+	// attachment at the end of a pass only when a later command reads it, and
+	// on the subpass tonemap path nothing does. Otherwise both are written back
+	// to memory every frame - at a 2940x3080 stereo eye buffer that is two 72 MB
+	// stores for nobody, measured at ~3 ms of a 5.9 ms empty frame on a Quest 3.
+	const bool discard_when_unread = !can_be_storage;
+	create_texture(RB_SCOPE_BUFFERS, RB_TEX_COLOR, get_base_data_format(), get_color_usage_bits(resolve_target, false, can_be_storage), RD::TEXTURE_SAMPLES_1, Size2i(), 0, 1, true, discard_when_unread);
 
 	// TODO: Detect when it is safe to use RD::TEXTURE_USAGE_TRANSIENT_BIT for RB_TEX_DEPTH, RB_TEX_COLOR_MSAA and/or RB_TEX_DEPTH_MSAA.
 	// (it means we cannot sample from it, we cannot copy from/to it) to save VRAM (and maybe performance too).
 
 	// Create our depth buffer.
-	create_texture(RB_SCOPE_BUFFERS, RB_TEX_DEPTH, get_depth_format(resolve_target, false, can_be_storage), get_depth_usage_bits(resolve_target, false, can_be_storage));
+	create_texture(RB_SCOPE_BUFFERS, RB_TEX_DEPTH, get_depth_format(resolve_target, false, can_be_storage), get_depth_usage_bits(resolve_target, false, can_be_storage), RD::TEXTURE_SAMPLES_1, Size2i(), 0, 1, true, discard_when_unread);
 
 	// Create our MSAA buffers.
 	if (msaa_3d == RSE::VIEWPORT_MSAA_DISABLED) {

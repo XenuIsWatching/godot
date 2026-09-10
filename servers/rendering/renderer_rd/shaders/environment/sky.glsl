@@ -52,6 +52,7 @@ layout(push_constant, std430) uniform Params {
 params;
 
 #include "../samplers_inc.glsl"
+#include "../tonemap_curves_inc.glsl"
 
 layout(set = 0, binding = 1, std430) restrict readonly buffer GlobalShaderUniformData {
 	vec4 data[];
@@ -80,6 +81,12 @@ layout(set = 0, binding = 2, std140) uniform SkySceneData {
 	uint directional_light_count; // 4 - 56
 	bool fog_use_legacy_blending; // 4 - 60
 	uint pad1; // 4 - 64
+
+	vec4 tonemapper_params; // 16 - 80
+	float tonemap_exposure; // 4 - 84
+	float tonemap_output_max; // 4 - 88
+	uint tonemap_mode; // 4 - 92
+	uint direct_output; // 4 - 96
 }
 sky_scene_data;
 
@@ -308,6 +315,16 @@ void main() {
 	// Alpha is used for subsurface scattering so make sure it doesn't get applied to Sky.
 	if (!AT_CUBEMAP_PASS && !AT_HALF_RES_PASS && !AT_QUARTER_RES_PASS) {
 		frag_color.a = 0.0;
+		if (sky_scene_data.direct_output != 0u) {
+			// The scene draws straight into the LDR render target and no tonemap pass
+			// follows: tonemap here, and encode when the target view is UNORM.
+			vec3 mapped = tmc_apply(frag_color.rgb * sky_scene_data.tonemap_exposure, sky_scene_data.tonemap_mode, sky_scene_data.tonemapper_params, sky_scene_data.tonemap_output_max);
+			mapped = clamp(mapped, vec3(0.0), vec3(1.0));
+			if (sky_scene_data.direct_output == 2u) {
+				mapped = tmc_linear_to_srgb(mapped);
+			}
+			frag_color.rgb = mapped;
+		}
 	}
 
 #ifdef USE_DEBANDING

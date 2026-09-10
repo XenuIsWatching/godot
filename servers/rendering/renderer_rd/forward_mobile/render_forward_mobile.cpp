@@ -1062,24 +1062,19 @@ void RenderForwardMobile::_render_scene(RenderDataRD *p_render_data, const Color
 
 		// Draw straight into the render target when the tonemap subpass would only be
 		// a copy: an LDR target this pass can resolve into, no colour adjustments, and
-		// no sky pass (its shader does not carry the tonemap epilogue yet). Debanding
-		// is kept by dithering in the scene shader instead. Saves a GMEM attachment
-		// and a subpass per bin on a tiler.
+		// the sky pass tonemaps in its own epilogue. Debanding is kept by dithering
+		// in the scene shader instead. Saves a GMEM attachment and a subpass per bin
+		// on a tiler.
 		if (using_subpass_post_process && render_directly_to_target && render_target.is_valid() && !texture_storage->render_target_is_using_hdr(render_target) && (p_render_data->scene_data->view_count > 1 || texture_storage->render_target_get_msaa(render_target) == RSE::VIEWPORT_MSAA_DISABLED)) {
-			bool env_draws_sky = false;
-			bool env_adjusts = false;
-			if (is_environment(p_render_data->environment)) {
-				RSE::EnvironmentBG env_bg = environment_get_background(p_render_data->environment);
-				env_draws_sky = !p_render_data->transparent_bg && (env_bg == RSE::ENV_BG_SKY || ((env_bg == RSE::ENV_BG_CLEAR_COLOR || env_bg == RSE::ENV_BG_COLOR) && environment_get_fog_enabled(p_render_data->environment)));
-				env_adjusts = environment_get_adjustments_enabled(p_render_data->environment);
-			}
-			using_direct_pass = !env_draws_sky && !env_adjusts && texture_storage->render_target_get_rd_texture(render_target).is_valid();
+			bool env_adjusts = is_environment(p_render_data->environment) && environment_get_adjustments_enabled(p_render_data->environment);
+			using_direct_pass = !env_adjusts && texture_storage->render_target_get_rd_texture(render_target).is_valid();
 		}
 		rb->set_direct_output(using_direct_pass);
 
 		if (using_direct_pass) {
 			framebuffer = rb_data->get_color_fbs(RenderBufferDataForwardMobile::FB_CONFIG_DIRECT_PASS, resolve_depth_buffer && supports_depth_resolve);
 			global_pipeline_data_required.use_direct_pass = true;
+			p_render_data->scene_data->direct_output = true;
 			p_render_data->scene_data->direct_encode_srgb = !rb_data->direct_target_is_srgb;
 		} else if (using_subpass_post_process) {
 			// We can do all in one go.

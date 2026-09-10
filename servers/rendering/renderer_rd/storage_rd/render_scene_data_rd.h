@@ -74,7 +74,8 @@ public:
 	float opaque_prepass_threshold = 0.0;
 	bool material_uv2_mode = false;
 	float emissive_exposure_normalization = 0.0;
-	bool direct_encode_srgb = true; // When drawing straight into the render target: the target view is UNORM, encode in the shader.
+	bool direct_output = false; // Drawing straight into the render target: tonemap in the scene and sky shaders.
+	bool direct_encode_srgb = true; // ... and the target view is UNORM, so encode there too.
 	bool shadow_pass = false;
 
 	Size2 shadow_atlas_pixel_size;

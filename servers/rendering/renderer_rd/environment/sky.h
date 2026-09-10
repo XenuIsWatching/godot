@@ -160,6 +160,13 @@ public:
 			uint32_t directional_light_count; // 4 - 344
 			uint32_t fog_use_legacy_blending; // 4 - 348
 			uint32_t pad1; // 4 - 352
+
+			// Applied in the sky shader when the scene draws straight into the render target.
+			float tonemapper_params[4]; // 16 - 368
+			float tonemap_exposure; // 4 - 372
+			float tonemap_output_max; // 4 - 376
+			uint32_t tonemap_mode; // 4 - 380
+			uint32_t direct_output; // 4 - 384: 0 off, 1 tonemap, 2 tonemap and encode to sRGB
 		};
 
 		UBO ubo;

@@ -1227,6 +1227,18 @@ void SkyRD::setup_sky(const RenderDataRD *p_render_data, const Size2i p_screen_s
 	sky_scene_state.ubo.volumetric_fog_sky_affect = RendererSceneRenderRD::get_singleton()->environment_get_volumetric_fog_sky_affect(p_render_data->environment);
 	sky_scene_state.ubo.fog_use_legacy_blending = RendererSceneRenderRD::get_singleton()->fog_use_legacy_blending_get();
 
+	// Same tonemapper the scene shader applies on the direct pass (SDR target: AgX white limited, max 1.0).
+	sky_scene_state.ubo.direct_output = p_render_data->scene_data->direct_output ? (p_render_data->scene_data->direct_encode_srgb ? 2 : 1) : 0;
+	sky_scene_state.ubo.tonemap_mode = RendererSceneRenderRD::get_singleton()->environment_get_tone_mapper(p_render_data->environment);
+	sky_scene_state.ubo.tonemap_exposure = RendererSceneRenderRD::get_singleton()->environment_get_exposure(p_render_data->environment);
+	sky_scene_state.ubo.tonemap_output_max = 1.0f;
+	{
+		RendererEnvironmentStorage::TonemapParameters tp = RendererSceneRenderRD::get_singleton()->environment_get_tonemap_parameters(p_render_data->environment, true, 1.0f);
+		for (int i = 0; i < 4; i++) {
+			sky_scene_state.ubo.tonemapper_params[i] = tp.tonemapper_params[i];
+		}
+	}
+
 	RD::get_singleton()->buffer_update(sky_scene_state.uniform_buffer, 0, sizeof(SkySceneState::UBO), &sky_scene_state.ubo);
 }
 
